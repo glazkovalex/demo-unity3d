@@ -12,32 +12,25 @@ public class BehaviourSphere : BehaviourPrefab
         get { return _speed; }
         set { _speed = value; }
     }
-    [SerializeField]
-    private float _speed = 0.1f;
+    //[SerializeField]
+    private float _speed = 1.0f;
 
-    private float _halfLenghtPath;
     private const string DEFAULT_NANE_QUAD_GAME_FIELD = "QuadGameField";
-    
+
+    public override void Launch() {
+        
+    }
+
     // Use this for initialization
     private void Start() {
-        if (QuadGameField == null) {
-            QuadGameField = transform.parent.FindChild(DEFAULT_NANE_QUAD_GAME_FIELD);
-            if (QuadGameField == null)
-                DebugF.LogError(
-                    "Корректная работа не возможна т.к. поле {0} не инициализировано" +
-                    " и в текущем объекте нет Quad'а c именем по умолчанию \"{1}\"",
-                    QuadGameField.GetType().GetProperties()[0].Name, DEFAULT_NANE_QUAD_GAME_FIELD);
-        }
-        _halfLenghtPath = QuadGameField.localScale.y / 2;
-        transform.position = new Vector3(transform.localPosition.x, _halfLenghtPath, transform.localPosition.z);
+        renderer.material.mainTexture = RemoteData.RequiredAssets["Checker.Black-White"].obj as Texture;
     }
 
     // Update is called once per frame
     private void Update() {
         // Перемещаю объект до дна игрового поля
-        if (transform.localPosition.y > -_halfLenghtPath) {
-            transform.position = new Vector3(transform.position.x,
-            transform.position.y - _halfLenghtPath * Time.deltaTime * _speed, transform.position.z);
+        if (transform.localPosition.y > - HalfFlightLength) {
+            transform.Translate(0, - Time.deltaTime * _speed, 0, Space.Self);
         }
         else {
             gameObject.SetActive(false);

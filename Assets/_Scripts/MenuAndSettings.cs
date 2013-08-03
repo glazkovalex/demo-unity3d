@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using System.Collections;
 
 /// <summary>
@@ -7,7 +8,7 @@ using System.Collections;
 /// </summary>
 public class MenuAndSettings : MonoBehaviour
 {
-    public GUISkin Skin; // Скин для кнопок основного меню 
+    private GUISkin _skin; // Скин для кнопок основного меню 
     private GUIStyle _welcomLabel; //Стиль для ненужной надписи вверху экрана 
 
     private Rect playGameRect = new Rect(Screen.width / 2 - 50, Screen.height / 2 - 65, 100, 30);
@@ -29,10 +30,6 @@ public class MenuAndSettings : MonoBehaviour
 
     // Use this for initialization
     void Start() {
-        if (Skin != null)
-            _welcomLabel = Skin.GetStyle("Header");
-        else
-            Debug.LogError("Не назначен skin. Выполнение невозможно");
     }
 
     void Update() {
@@ -40,12 +37,13 @@ public class MenuAndSettings : MonoBehaviour
     }
 
     void OnGUI() {
+        if(!RemoteData.DataValid)
+            return;
         if (Input.GetKey(KEY_TO_MAIN_MENU)) { //Если нажали кнопку вызова главного меню, то:
             gameMode = false; //активизация основного меню
             optionsMode = false;
             moveMode = false;
             Time.timeScale = 0; //Остановка игрового времени (Пауза)
-            //if (gameWasStartedMode) FreeMouseLook(false); //отключение обзора
         }
 
         if (gameMode) { // Если активен режим игры, то игровой комментарий
@@ -63,7 +61,7 @@ public class MenuAndSettings : MonoBehaviour
         else if (optionsMode) //Если активно меню "Настройки", то рисуем его
         {
             GUI.Label(new Rect(Screen.width / 2, 0, 50, 20), "Настройки", _welcomLabel);
-            GUI.skin = Skin;
+            GUI.skin = _skin;
             GUI.Label(new Rect(270, 75, 50, 20), "Шаг смещения");
             step = GUI.HorizontalSlider(new Rect(50, 100, 500, 20), step, 0.1f, 10);
             GUI.Label(new Rect(560, 95, 50, 20), /*_shootDelay*/step.ToString());
@@ -78,7 +76,7 @@ public class MenuAndSettings : MonoBehaviour
         else //Значит активно основное меню. Рисуем и обрабатываем кнопки.
         {
             GUI.Label(new Rect(Screen.width / 2, 0, 50, 20), "Здравствуйте", _welcomLabel);
-            GUI.skin = Skin;
+            GUI.skin = _skin;
 
             if (!gameWasStartedMode) //Если еще НЕ была запущена, то запускаем
             {
@@ -106,5 +104,12 @@ public class MenuAndSettings : MonoBehaviour
 
     void Awake() {
         DontDestroyOnLoad(this); //Сохраняет целевой объект при загрузке новой сцены.
+        RemoteData.AllComplete += RemoteDataOnAllComplete;
+    }
+
+    private void RemoteDataOnAllComplete(object sender, EventArgs eventArgs) {
+        _skin = RemoteData.RequiredAssets["MenuSkin"].obj as GUISkin;
+        _welcomLabel = _skin.GetStyle("Header");
+        RemoteData.AllComplete -= RemoteDataOnAllComplete;
     }
 }
