@@ -1,18 +1,21 @@
-﻿using System;
+﻿#region Поля и свойства
+using System;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 using System.Collections;
+using Object = UnityEngine.Object;
+//using Wintellect.Threading.AsyncProgModel;
 using Random = UnityEngine.Random;
 
+/// <summary>
+/// Фабрика объектов использующая менеджер ресурсов.
+/// Перед использованием необходимо вызвать метод Init ! 
+/// </summary>
 public class FactoryPrefabs : MonoBehaviour
 {
     /// <summary>
-    /// Средний масштаб префаба
-    /// </summary>
-    [SerializeField]
-    private float _averageScale = 1;
-    /// <summary>
-    /// Средний масштаб префаба
+    /// Средний масштаб префаба. Свойство потокобезопасно. 
     /// </summary>
     public float AverageScale {
         get { return _averageScale; }
@@ -21,7 +24,19 @@ public class FactoryPrefabs : MonoBehaviour
                 _averageScale = value;
         }
     }
+    [SerializeField]
+    private volatile float _averageScale = 1;
 
+    /// <summary>
+    /// Средняя скорость для запускаемых объектов. Свойство потокобезопасно.
+    /// </summary>
+    public float AverageSpeed {
+        get { return _averageSpeed; }
+        set { _averageSpeed = value; }
+    }
+    [SerializeField]
+    private volatile float _averageSpeed = 0.1f;
+    
     /// <summary>
     /// Разброс масштаба префабов
     /// </summary>
@@ -32,31 +47,14 @@ public class FactoryPrefabs : MonoBehaviour
                 _deltaScale = value;
         }
     }
-    /// <summary>
-    /// Разброс масштабов префабов
-    /// </summary>
     [SerializeField]
     private float _deltaScale = 50;
     
-
-    /// <summary>
-    /// Средняя скорость, с которой перемещается префабы
-    /// </summary>
-    public float AverageSpeed {
-        get { return _averageSpeed; }
-        set {
-            if (Math.Abs(value - _averageSpeed) > float.Epsilon)
-                _averageSpeed = value;
-        }
-    }
-    [SerializeField]
-    private float _averageSpeed;
-
-    public enum Characteristic
+   public enum Characteristic
     {
-        Linear, // Делить единожды
-        Square, // Делить на квадрат
-        Cubic   // Делить на куб     
+        Linear = 1, // Делить единожды
+        Square = 2, // Делить на квадрат
+        Cubic  = 3  // Делить на куб     
     }
 
     /// <summary>
@@ -77,70 +75,109 @@ public class FactoryPrefabs : MonoBehaviour
     private class Prefabs
     {
         /// <summary>
-        /// префаб
-        /// </summary>
-        public GameObject Prefab { get; set; }
-
-        /// <summary>
         /// Компонент содержащий настройки поведения префаба
         /// </summary>
         public BehaviourPrefab Behaviour { 
             get { return _behaviour ?? Prefab.GetComponent<BehaviourPrefab>(); }
             set { _behaviour = value; }
         }
+        public GameObject Prefab { get; set; }
+        
         private BehaviourPrefab _behaviour;
     }
 
     private List<Prefabs> prefabs = new List<Prefabs>();
 
-    /// <summary>
-    /// Шаблонный префаб, который задается через интерфейс 
-    /// </summary>
-    [SerializeField]
+    ///// <summary>
+    ///// Шаблонный префаб, который задается через интерфейс
+    ///// </summary>
+    //public GameObject TemplatePrefab {
+    //    get { return _templatePrefab; }
+    //    set {
+    //        if (_templatePrefab != null && _templatePrefab != value) {
+    //            _templatePrefab = value;
+    //        }
+    //    }
+    //}
+    //[SerializeField]
     private GameObject _templatePrefab;
+
+    private float _halfFlightWidth;
+
+#endregion
+
     /// <summary>
-    /// Шаблонный префаб, который задается через интерфейс
+    /// Инициализатор вместо конструктора
     /// </summary>
-    public GameObject TemplatePrefab {
-        get { return _templatePrefab; }
-        set {
-            if (_templatePrefab != null && _templatePrefab != value) {
-                _templatePrefab = value;
-            }
-        }
+    public void Init(float halfFlightWidth) {
+        _halfFlightWidth = halfFlightWidth;
+    }
+	
+    void Awake() {
+        if (RemoteData.DataValid) // Если данные уже загрузить, то проинициализароваться 
+            RemoteDataOnAllComplete(new Object(), new EventArgs());
+        else // Подождать загрузки данных
+            RemoteData.AllComplete += RemoteDataOnAllComplete;
+    }
+
+    private void RemoteDataOnAllComplete(object sender, EventArgs eventArgs) {
+        // Инициализация ресурсов загружаемых из удаленного источника и отписка
+        _templatePrefab = RemoteData.RequiredAssets["DefSphere"].obj as GameObject;
+        RemoteData.AllComplete -= RemoteDataOnAllComplete; 
     }
 
     // Use this for initialization
     void Start() {
+        //transform.position = new Vector3(transform.localPosition.x, _halfLenghtPath, transform.localPosition.z);
     }
 
     // Update is called once per frame
     void Update() {
-        if (Input.GetMouseButtonDown(1)) {// Добавить фигуру
-            NewSphere();
-        }
+        
     }
 
-    void NewSphere() {
-        if (_templatePrefab != null) {
-            //float tempHeightFactor;
-            //запоминание свежеразмещенного префаба в случайных координатах при выравнивании поворота по родительскому объекту.
-            //tempHeightFactor = UnityEngine.Random.Range(1 - _deltaHeight / 100, 1 + _deltaHeight / 100);
-            GameObject prefab = Instantiate(_templatePrefab,
-                transform.rotation * new Vector3(Random.Range(-5, 5), 5, 0) +
-                    transform.position, transform.rotation/*Quaternion.identity*/) as GameObject;
+    public BehaviourPrefab LaunchPrefab() {
+        // Поискать свободный среди имеющихся.
+        // Если нет нет, то заказать создание нового объекта
+        // заказать запуск 
+        return LaunchNewSphere();
+        
+    }
+
+    public void RunDoWork(int n) {
+        ThreadPool.QueueUserWorkItem(o => DoWork(n));
+    }
+
+    int DoWork(int n) {
+        int resuIt = 1;
+        for (int i = 0; i < n; i++) {
+            resuIt++;
+        }
+        return resuIt;
+    }
+
+    private BehaviourPrefab LaunchNewSphere() {
+        BehaviourPrefab behaviour = null;
+        if (RemoteData.DataValid) {
+            //Расчет масштаба префаба 
+            float differentialScale = Random.Range(1 - _deltaScale/100, 1 + _deltaScale/100);
+            float scale = _averageScale * differentialScale;
+            
+            // Размещение префаба
+            float halfAvailableFlightWidth = _halfFlightWidth - scale / 2; //Чтобы помещались целиком
+            GameObject prefab = Instantiate(_templatePrefab, transform.rotation *
+                new Vector3(Random.Range(-halfAvailableFlightWidth, halfAvailableFlightWidth),
+                    BehaviourPrefab.HalfFlightLength, 0) + transform.position, transform.rotation) as GameObject;
             
             if (prefab != null) {
                 // Задание размера и скорости
-                float differentialScale = Random.Range(1 - _deltaScale/100, 1 + _deltaScale/100);
-                prefab.transform.localScale = Vector3.one * _averageScale * differentialScale;
-                BehaviourPrefab behaviour = prefab.GetComponent<BehaviourPrefab>();
+
+                prefab.transform.localScale = Vector3.one * scale;
+                behaviour = prefab.GetComponent<BehaviourPrefab>();
                 if (behaviour != null) { // Реализую степенные зависимости скорости от размера
                     behaviour.Speed = _averageSpeed/Mathf.Pow(differentialScale, (int) _dividerSpeedOfSize);
-                    DebugF.Log("У нового префаба № {0} размер : {1}, скорость : {2}",
-                        prefabs.Count, prefab.transform.localScale, behaviour.Speed);
-                    // Подписываюсь на подсчет очков
-                    behaviour.Burst += CalcScore;
+                    //DebugF.Log("У нового префаба № {0} размер : {1}, скорость : {2}",
+                    //    prefabs.Count, prefab.transform.localScale, behaviour.Speed);
                 }
                 else
                     DebugF.LogError("В назначенном префабе нет ожидаемого компонента потомка {0} ",
@@ -149,56 +186,16 @@ public class FactoryPrefabs : MonoBehaviour
                 prefabs.Add(new Prefabs
                 {
                     Prefab = prefab,
-                    Behaviour = behaviour
+                    Behaviour = behaviour, 
                 });
             }
             else Debug.LogError("Не удалось разместить на сцене копию образцового префаба");
             //Debug.Log("AverageSpeed:" + _averageSpeed + ", CustomSpeed:" + _averageSpeed * UnityEngine.Random.Range(1 - _deltaSpeed / 100, 1 + _deltaSpeed / 100));
         }
-        else Debug.LogWarning("Не задан образец префаба. Задайте его в интерфейсе");
+        return behaviour;
     }
 
-    private int _score = 0;
     
-    private void CalcScore(object sender, EventArgs eventArgs) {
-        BehaviourPrefab behaviour = sender as BehaviourPrefab;
-        // Суммирую счет и отписываюсь. Очки счета = 100*скорость, которая есть функция от масштаба.
-        DebugF.Log("Лопнули префаб со скоростью : " + behaviour.Speed);
-        _score += (int)(behaviour.Speed * 100); 
-        behaviour.Burst -= CalcScore;
-    }
-
-    /// <summary>
-    /// OnGUI вызывается для отрисовки и обработки событий GUI
-    /// </summary>
-    void OnGUI() {
-         GUI.Label(new Rect(0,0,200,30), _score.ToString());
-    }
 }
 
-/// <summary>
-/// Базовый класс определяющий поведение префабов на сцене
-/// </summary>
-public abstract class BehaviourPrefab : MonoBehaviour
-{
-    /// <summary>
-    /// Текущая скорость префаба
-    /// </summary>
-    public virtual float Speed { get; set; }
 
-    /// <summary>
-    /// Префаб был "лопнут"
-    /// </summary>
-    public event EventHandler Burst;
-
-    /// <summary>
-    /// Оболочка для зажигания событие префаб "лопнули" из потомков.
-    /// </summary>
-    /// <param name="e">Аргументы события</param>
-    protected virtual void OnBurst(EventArgs e) {
-        if (Burst != null)
-            Burst(this, e);
-        else
-            DebugF.Log("Подписчиков нет :(");
-    }
-}
