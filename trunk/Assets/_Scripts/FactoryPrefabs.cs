@@ -1,21 +1,18 @@
 ﻿#region Поля и свойства
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using UnityEngine;
-using System.Collections;
-using Object = UnityEngine.Object;
-//using Wintellect.Threading.AsyncProgModel;
 using Random = UnityEngine.Random;
 
 /// <summary>
-/// Фабрика объектов использующая менеджер ресурсов.
-/// Перед использованием необходимо вызвать метод Init ! 
+/// Фабрика объектов.
+/// Перед использованием, как обычно, необходимо вызвать метод Init. 
 /// </summary>
+[RequireComponent(typeof(ResourceManager))]
 public class FactoryPrefabs : MonoBehaviour
 {
     /// <summary>
-    /// Средний масштаб префаба. Свойство потокобезопасно. 
+    /// Средний масштаб префаба. 
     /// </summary>
     public float AverageScale {
         get { return _averageScale; }
@@ -25,18 +22,25 @@ public class FactoryPrefabs : MonoBehaviour
         }
     }
     [SerializeField]
-    private volatile float _averageScale = 1;
+    private float _averageScale = 1;
 
     /// <summary>
-    /// Средняя скорость для запускаемых объектов. Свойство потокобезопасно.
+    /// Средняя скорость для запускаемых объектов.
     /// </summary>
     public float AverageSpeed {
         get { return _averageSpeed; }
         set { _averageSpeed = value; }
     }
     [SerializeField]
-    private volatile float _averageSpeed = 0.1f;
-    
+    private float _averageSpeed = 0.1f;
+
+    /// <summary>
+    /// Актуальный для текущего уровня набор текстур, в котором
+    /// левое измерение соответствует размерам фигур, а правое номерам доступных текстур  
+    /// </summary>
+    public Texture2D[,] Textures { set { _textures = value; } }
+    private Texture2D[,] _textures;
+
     /// <summary>
     /// Разброс масштаба префабов
     /// </summary>
@@ -49,153 +53,136 @@ public class FactoryPrefabs : MonoBehaviour
     }
     [SerializeField]
     private float _deltaScale = 50;
-    
-   public enum Characteristic
+
+    public enum Characteristic
     {
         Linear = 1, // Делить единожды
         Square = 2, // Делить на квадрат
-        Cubic  = 3  // Делить на куб     
+        Cubic = 3  // Делить на куб     
     }
 
     /// <summary>
     /// Зависимость скорости от уменьшения размера
     /// </summary>
     public Characteristic DividerSpeedOfSize {
-        get { return _dividerSpeedOfSize; }
+        get { return (Characteristic)_dividerSpeedOfSize; }
         set {
-            _dividerSpeedOfSize = value;
-            //foreach (var item in prefabs) {
-            //    item.Value.speedFactor = UnityEngine.Random.Range(1 - _dividerSpeedOfSize / 100, 1 + _dividerSpeedOfSize / 100);
-            //}
+            _dividerSpeedOfSize = (int)value;
         }
     }
     [SerializeField]
-    private Characteristic _dividerSpeedOfSize;
-    
-    private class Prefabs
-    {
-        /// <summary>
-        /// Компонент содержащий настройки поведения префаба
-        /// </summary>
-        public BehaviourPrefab Behaviour { 
-            get { return _behaviour ?? Prefab.GetComponent<BehaviourPrefab>(); }
-            set { _behaviour = value; }
-        }
-        public GameObject Prefab { get; set; }
-        
-        private BehaviourPrefab _behaviour;
-    }
+    private int _dividerSpeedOfSize;
 
-    private List<Prefabs> prefabs = new List<Prefabs>();
+    private int _lastNomber = 0;
 
-    ///// <summary>
-    ///// Шаблонный префаб, который задается через интерфейс
-    ///// </summary>
-    //public GameObject TemplatePrefab {
-    //    get { return _templatePrefab; }
-    //    set {
-    //        if (_templatePrefab != null && _templatePrefab != value) {
-    //            _templatePrefab = value;
-    //        }
-    //    }
-    //}
-    //[SerializeField]
+    private readonly Queue<BehaviourPrefab> _fifoPrefabs = new Queue<BehaviourPrefab>();
+
+    /// <summary>
+    /// Шаблонный префаб
+    /// </summary>
     private GameObject _templatePrefab;
 
     private float _halfFlightWidth;
-
 #endregion
 
     /// <summary>
     /// Инициализатор вместо конструктора
     /// </summary>
-    public void Init(float halfFlightWidth) {
+    /// <param name="halfFlightWidth">половина ширины полетного пространства</param>
+    /// <param name="textures">Массив текстур для запускаемых префабов</param>
+    public void Init(float halfFlightWidth, Texture2D[,] textures) {
         _halfFlightWidth = halfFlightWidth;
-    }
-	
-    void Awake() {
-        if (RemoteData.DataValid) // Если данные уже загрузить, то проинициализароваться 
-            RemoteDataOnAllComplete(new Object(), new EventArgs());
-        else // Подождать загрузки данных
-            RemoteData.AllComplete += RemoteDataOnAllComplete;
-    }
-
-    private void RemoteDataOnAllComplete(object sender, EventArgs eventArgs) {
-        // Инициализация ресурсов загружаемых из удаленного источника и отписка
-        _templatePrefab = RemoteData.RequiredAssets["DefSphere"].obj as GameObject;
-        RemoteData.AllComplete -= RemoteDataOnAllComplete; 
+        _textures = textures;
     }
 
     // Use this for initialization
     void Start() {
-        //transform.position = new Vector3(transform.localPosition.x, _halfLenghtPath, transform.localPosition.z);
+        InitFromRemoteData();
     }
 
-    // Update is called once per frame
-    void Update() {
-        
-    }
-
-    public BehaviourPrefab LaunchPrefab() {
-        // Поискать свободный среди имеющихся.
-        // Если нет нет, то заказать создание нового объекта
-        // заказать запуск 
-        return LaunchNewSphere();
-        
-    }
-
-    public void RunDoWork(int n) {
-        ThreadPool.QueueUserWorkItem(o => DoWork(n));
-    }
-
-    int DoWork(int n) {
-        int resuIt = 1;
-        for (int i = 0; i < n; i++) {
-            resuIt++;
+    /// <summary>
+    /// Инициализация локальных объектов данными из удаленного источника
+    /// </summary>
+    void InitFromRemoteData() {
+        if (!RemoteData.DataValid) { // Подождать загрузки данных
+            RemoteData.AllComplete += InitFromRemoteData;
+            return;
         }
-        return resuIt;
+        //Иначе данные уже загрузились, можно отписаться и проинициализароваться 
+        RemoteData.AllComplete -= InitFromRemoteData;
+        // Инициализация объектов данными из удаленного источника и отписка:
+        _templatePrefab = RemoteData.RequiredAssets["DefSphere"].obj as GameObject;
     }
 
-    private BehaviourPrefab LaunchNewSphere() {
+    /// <summary>
+    /// Запускает прифабы. Отлетавшие префабы помещаются в кэш для повторного использования.
+    /// </summary>
+    /// <returns>возвращает компонент запущенного префаба</returns>
+    public BehaviourPrefab LaunchPrefab() {
         BehaviourPrefab behaviour = null;
         if (RemoteData.DataValid) {
+            if (_fifoPrefabs.Count > 0)
+                behaviour = _fifoPrefabs.Dequeue();
+            
             //Расчет масштаба префаба 
-            float differentialScale = Random.Range(1 - _deltaScale/100, 1 + _deltaScale/100);
+            float maxScale = (1 + _deltaScale / 100);
+            float minScale = (1 - _deltaScale / 100);
+            float differentialScale = Random.Range(minScale, maxScale);
             float scale = _averageScale * differentialScale;
             
-            // Размещение префаба
+            // Расчет нового положения
             float halfAvailableFlightWidth = _halfFlightWidth - scale / 2; //Чтобы помещались целиком
-            GameObject prefab = Instantiate(_templatePrefab, transform.rotation *
-                new Vector3(Random.Range(-halfAvailableFlightWidth, halfAvailableFlightWidth),
-                    BehaviourPrefab.HalfFlightLength, 0) + transform.position, transform.rotation) as GameObject;
+            Vector3 newTransform = transform.rotation * new Vector3(Random.Range(-halfAvailableFlightWidth,
+            halfAvailableFlightWidth), BehaviourPrefab.HalfFlightLength, 0) + transform.position;
             
-            if (prefab != null) {
-                // Задание размера и скорости
-
-                prefab.transform.localScale = Vector3.one * scale;
-                behaviour = prefab.GetComponent<BehaviourPrefab>();
-                if (behaviour != null) { // Реализую степенные зависимости скорости от размера
-                    behaviour.Speed = _averageSpeed/Mathf.Pow(differentialScale, (int) _dividerSpeedOfSize);
-                    //DebugF.Log("У нового префаба № {0} размер : {1}, скорость : {2}",
-                    //    prefabs.Count, prefab.transform.localScale, behaviour.Speed);
-                }
-                else
-                    DebugF.LogError("В назначенном префабе нет ожидаемого компонента потомка {0} ",
-                                    behaviour.GetType().Name);
-                prefab.transform.parent = gameObject.transform;
-                prefabs.Add(new Prefabs
-                {
-                    Prefab = prefab,
-                    Behaviour = behaviour, 
-                });
+            if (behaviour == null) { // т.е. нужно создать новый gameObject
+                GameObject prefab = Instantiate(_templatePrefab, newTransform, transform.rotation) as GameObject;
+                if (prefab == null)
+                    Debug.LogError("Не удалось разместить на сцене копию образцового префаба");
+                behaviour = prefab.GetComponent<BehaviourPrefab>(); // Должен быть, иначе NullReferenceException
+                behaviour.Id = _lastNomber;
+                _lastNomber++;
             }
-            else Debug.LogError("Не удалось разместить на сцене копию образцового префаба");
-            //Debug.Log("AverageSpeed:" + _averageSpeed + ", CustomSpeed:" + _averageSpeed * UnityEngine.Random.Range(1 - _deltaSpeed / 100, 1 + _deltaSpeed / 100));
+            else { //иначе запускаем имеющийся gameObject
+                behaviour.gameObject.SetActive(true);
+                behaviour.gameObject.transform.position = newTransform;
+            }
+            
+            // Задание размера
+            behaviour.gameObject.transform.parent = gameObject.transform;
+            behaviour.gameObject.transform.localScale = Vector3.one * scale;
+
+            // Задаю степенные зависимости скорости от размера. 
+            behaviour.Speed = _averageSpeed / Mathf.Pow(differentialScale, (int)_dividerSpeedOfSize);
+            
+            // Расчет и наложение текстур и цветов на префаб
+            int textureSize = (int)((scale / _averageScale - minScale) / 
+                (maxScale - minScale) * _textures.GetLength(0) - 1e-6);
+            Color color = _colors[Random.Range(0, _colors.Length - 1)];
+            behaviour.renderer.material.color = 0.2f * color.gamma + Color.white *0.8f;
+            behaviour.renderer.material.mainTexture = _textures[textureSize, 
+                Random.Range(0, _textures.GetLength(1) - 1)];
+            
+            behaviour.Burst += BehaviourOnBurst; // По возвращении засуну в кэш, про запас
+            //Material quarMaterial = transform.FindChild("QuadGameField").renderer.material;
+            //quarMaterial.color = color;
+            //quarMaterial.mainTexture = texture;
         }
         return behaviour;
     }
 
-    
+    private readonly Color[] _colors = new[]
+        {
+            /*Color.black,*/ Color.blue, /*Color.clear,*/ Color.cyan, Color.gray, Color.green, 
+            Color.grey, Color.magenta, Color.red, Color.white, Color.yellow
+        };
+
+    private void BehaviourOnBurst(object sender, EventArgs eventArgs) {
+        // Объект освободился. Отписываюсь и помещаю его в кэш.  
+        BehaviourPrefab behaviour = (BehaviourPrefab)sender;
+        behaviour.Burst -= BehaviourOnBurst;
+        _fifoPrefabs.Enqueue(behaviour);
+    }
 }
 
 

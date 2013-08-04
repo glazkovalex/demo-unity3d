@@ -4,7 +4,7 @@ using UnityEditor;
 /// <summary>
 /// Добавляет в меню "Assets" для пункта, позволяющие забандлить выбранные в дереве проекта Assets
 /// </summary>
-public class ExportAssetBundles
+public class ExportAssetBundles : EditorWindow
 {
     [MenuItem("Assets/Build AssetBundle From Selection - Track dependencies")]
     static void ExportResource() {
